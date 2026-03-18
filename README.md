@@ -1,0 +1,1 @@
+# Correcteur-orthographique-langue-corse
