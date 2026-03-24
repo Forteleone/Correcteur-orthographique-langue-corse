@@ -24285,6 +24285,10 @@ let spanActuel = null;
 // ============================================================
 //  LEVENSHTEIN
 // ============================================================
+function normaliserAccents(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
   if (m === 0) return n;
@@ -24301,13 +24305,18 @@ function levenshtein(a, b) {
 
 function getSuggestions(mot, maxDist=2, topN=4) {
   const ml = mot.toLowerCase();
+  const mlNorm = normaliserAccents(ml);
   const res = [];
   for (const w of LEXIQUE) {
-    if (Math.abs(w.length - ml.length) > maxDist) continue;
-    const d = levenshtein(ml, w.toLowerCase());
-    if (d <= maxDist) res.push({w, d});
+    if (Math.abs(w.length - ml.length) > maxDist + 1) continue;
+    const wl = w.toLowerCase();
+    const dNorm = levenshtein(mlNorm, normaliserAccents(wl));
+    if (dNorm > maxDist) continue;
+    const d = levenshtein(ml, wl);
+    res.push({w, d, dNorm});
   }
-  res.sort((a,b) => a.d - b.d || a.w.localeCompare(b.w));
+  // Tri : distance normalisée (sans accents) d'abord, puis distance exacte, puis alphabétique
+  res.sort((a,b) => a.dNorm - b.dNorm || a.d - b.d || a.w.localeCompare(b.w));
   return res.slice(0, topN).map(x => x.w);
 }
 
