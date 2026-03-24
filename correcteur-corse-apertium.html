@@ -162,6 +162,30 @@
   }
   .word-error:hover { background: #facac6; }
 
+  .word-foreign {
+    background: #fef9c3;
+    border-bottom: 2.5px solid #d97706;
+    border-radius: 2px;
+    cursor: pointer;
+    padding: 0 1px;
+    position: relative;
+    transition: background .15s;
+  }
+  .word-foreign:hover { background: #fde68a; }
+
+  .li-foreign-badge {
+    font-size: 9px;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #d97706;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    vertical-align: middle;
+    margin-right: 2px;
+  }
+
   /* ── Stats bar ── */
   #stats-bar {
     display: none;
@@ -362,7 +386,7 @@
 <div id="tooltip">
   <span class="tip-close" onclick="fermerTooltip()">✕</span>
   <div class="tip-word" id="tip-word"></div>
-  <div class="tip-label">Mot inconnu du lexique</div>
+  <div class="tip-label" id="tip-label">Mot inconnu du lexique</div>
   <div class="tip-sugs" id="tip-sugs"></div>
 </div>
 
@@ -24268,6 +24292,20 @@ let motActuel = null;
 let spanActuel = null;
 
 // ============================================================
+//  ÉQUIVALENCES — mots français / italiens → forme corse
+// ============================================================
+const EQUIVALENCES = new Map([
+  // Français
+  ['est',     'hè'],
+  ['et',      'è'],
+  ['en',      'in'],
+  ['sur',     'nantu'],
+  // Italien
+  ['bambini', 'zittelli'],
+  ['giorno',  'ghjornu'],
+]);
+
+// ============================================================
 //  LEVENSHTEIN
 // ============================================================
 function levenshtein(a, b) {
@@ -24364,13 +24402,20 @@ function lancerCorrection() {
       html += tok.texte.replace(/\n/g, '<br>');
     } else {
       nbMots++;
-      if (estCorrect(tok.texte)) {
+      const motLower = tok.texte.toLowerCase();
+      if (EQUIVALENCES.has(motLower)) {
+        const equiv = EQUIVALENCES.get(motLower);
+        const sugStr = JSON.stringify([equiv]).replace(/"/g, '&quot;');
+        html += `<span class="word-foreign" data-mot="${escHtml(tok.texte)}" data-sugs="${sugStr}" data-foreign="true" onclick="afficherTooltip(this, event)">${escHtml(tok.texte)}</span>`;
+        if (!erreurs.find(e => e.mot.toLowerCase() === motLower)) {
+          erreurs.push({ mot: tok.texte, sugs: [equiv], foreign: true });
+        }
+      } else if (estCorrect(tok.texte)) {
         html += `<span>${escHtml(tok.texte)}</span>`;
       } else {
         const sugs = getSuggestions(tok.texte);
         const sugStr = JSON.stringify(sugs).replace(/"/g, '&quot;');
         html += `<span class="word-error" data-mot="${escHtml(tok.texte)}" data-sugs="${sugStr}" onclick="afficherTooltip(this, event)">${escHtml(tok.texte)}</span>`;
-        // Dédupliquer pour la liste
         if (!erreurs.find(e => e.mot.toLowerCase() === tok.texte.toLowerCase())) {
           erreurs.push({ mot: tok.texte, sugs });
         }
@@ -24400,9 +24445,10 @@ function lancerCorrection() {
     emptyDiv.classList.add('visible');
   } else {
     emptyDiv.classList.remove('visible');
-    for (const {mot, sugs} of erreurs) {
+    for (const {mot, sugs, foreign} of erreurs) {
       const li = document.createElement('li');
-      li.innerHTML = `<span class="li-word">${escHtml(mot)}</span>
+      const badge = foreign ? '<span class="li-foreign-badge">fr/it</span>' : '';
+      li.innerHTML = `<span class="li-word">${escHtml(mot)}</span>${badge}
         <span class="li-sugs">${sugs.length ? sugs.join(', ') : 'aucune suggestion'}</span>`;
       li.onclick = () => surlignerMot(mot);
       ul.appendChild(li);
@@ -24422,8 +24468,12 @@ function afficherTooltip(span, e) {
 
   motActuel = span.dataset.mot;
   const sugs = JSON.parse(span.dataset.sugs.replace(/&quot;/g, '"'));
+  const isForeign = span.dataset.foreign === 'true';
 
   document.getElementById('tip-word').textContent = motActuel;
+  document.getElementById('tip-label').textContent = isForeign
+    ? 'Mot français ou italien détecté'
+    : 'Mot inconnu du lexique';
 
   const tipSugs = document.getElementById('tip-sugs');
   tipSugs.innerHTML = '';
@@ -24479,7 +24529,7 @@ function appliquerCorrection(span, suggestion) {
 }
 
 function surlignerMot(mot) {
-  const spans = document.querySelectorAll('.word-error');
+  const spans = document.querySelectorAll('.word-error, .word-foreign');
   for (const s of spans) {
     if (s.dataset.mot === mot) {
       s.scrollIntoView({behavior:'smooth', block:'center'});
