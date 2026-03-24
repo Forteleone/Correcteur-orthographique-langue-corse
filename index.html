@@ -24308,18 +24308,28 @@ const EQUIVALENCES = new Map([
 // ============================================================
 //  LEVENSHTEIN
 // ============================================================
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
+function levenshtein(a, b, maxDist = 999) {
+  let m = a.length, n = b.length;
   if (m === 0) return n;
   if (n === 0) return m;
-  const dp = Array.from({length: m+1}, (_, i) =>
-    Array.from({length: n+1}, (_, j) => i === 0 ? j : j === 0 ? i : 0)
-  );
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++)
-      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
-        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
-  return dp[m][n];
+  if (m > n) { [a, b] = [b, a]; [m, n] = [n, m]; }  // a = mot court
+  // Deux lignes seulement au lieu d'une matrice m×n
+  let prev = new Int16Array(n + 1);
+  let curr = new Int16Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= n; j++) {
+      curr[j] = a[i-1] === b[j-1]
+        ? prev[j-1]
+        : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > maxDist) return rowMin;  // early exit
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
 }
 
 function normaliserAccents(s) {
@@ -24347,20 +24357,34 @@ function typeFaute(aN, bN) {
   return 2;
 }
 
+// Pré-calcul au démarrage : formes normalisées + index par longueur
+const LEXIQUE_DATA = [];
+for (const w of LEXIQUE) {
+  const wl = w.toLowerCase();
+  LEXIQUE_DATA.push({ w, wl, wlNorm: normaliserAccents(wl) });
+}
+const LEXIQUE_BY_LEN = new Map();
+for (const entry of LEXIQUE_DATA) {
+  const len = entry.wl.length;
+  if (!LEXIQUE_BY_LEN.has(len)) LEXIQUE_BY_LEN.set(len, []);
+  LEXIQUE_BY_LEN.get(len).push(entry);
+}
+
 function getSuggestions(mot, maxDist=2, topN=4) {
   const ml = mot.toLowerCase();
   const mlNorm = normaliserAccents(ml);
   const res = [];
-  for (const w of LEXIQUE) {
-    const wl = w.toLowerCase();
-    if (Math.abs(wl.length - ml.length) > maxDist + 1) continue;
-    const wlNorm = normaliserAccents(wl);
-    const dNorm = levenshtein(mlNorm, wlNorm);
-    if (dNorm > maxDist) continue;
-    const d = levenshtein(ml, wl);
-    const lcp = prefixCommun(ml, wl);
-    const type = typeFaute(mlNorm, wlNorm);
-    res.push({w, type, dNorm, d, lcp});
+  const minLen = Math.max(1, ml.length - maxDist - 1);
+  const maxLen = ml.length + maxDist + 1;
+  for (let len = minLen; len <= maxLen; len++) {
+    for (const {w, wl, wlNorm} of (LEXIQUE_BY_LEN.get(len) || [])) {
+      const dNorm = levenshtein(mlNorm, wlNorm, maxDist);
+      if (dNorm > maxDist) continue;
+      const d = levenshtein(ml, wl, maxDist + 1);
+      const lcp = prefixCommun(ml, wl);
+      const type = typeFaute(mlNorm, wlNorm);
+      res.push({w, type, dNorm, d, lcp});
+    }
   }
   res.sort((a,b) => a.type - b.type || a.dNorm - b.dNorm || a.d - b.d || b.lcp - a.lcp || a.w.localeCompare(b.w));
   return res.slice(0, topN).map(x => x.w);
@@ -24375,12 +24399,14 @@ function tokeniser(texte) {
     .map(m => ({ texte: m[0], estMot: !!m[1] }));
 }
 
-function estCorrect(mot) {
+function estCorrect(mot, debutPhrase = false) {
   const m = mot.toLowerCase().replace(/['''\u2019\u2018]/g, "'");
   if (m.length <= 1) return true;
   if (/^\d+$/.test(m)) return true;
   if (LEXIQUE.has(m)) return true;
-  if (/^[A-ZÀÂÉÈÊÎÏÔÙÛÜ]/.test(mot)) return true; // noms propres tolérés
+  // Nom propre : toléré seulement en milieu de phrase
+  // En début de phrase, la capitale ne prouve rien (peut être "La", "Il", "Sur"…)
+  if (!debutPhrase && /^[A-ZÀÂÉÈÊÎÏÔÙÛÜ]/.test(mot)) return true;
   return false;
 }
 
@@ -24397,11 +24423,15 @@ function lancerCorrection() {
 
   // Construire le HTML annoté
   let html = '';
+  let debutPhrase = true;
   for (const tok of tokens) {
     if (!tok.estMot) {
+      if (/[.!?…\n]/.test(tok.texte)) debutPhrase = true;
       html += tok.texte.replace(/\n/g, '<br>');
     } else {
       nbMots++;
+      const isDebutPhrase = debutPhrase;
+      debutPhrase = false;
       const motLower = tok.texte.toLowerCase();
       if (EQUIVALENCES.has(motLower)) {
         const equiv = EQUIVALENCES.get(motLower);
@@ -24410,7 +24440,7 @@ function lancerCorrection() {
         if (!erreurs.find(e => e.mot.toLowerCase() === motLower)) {
           erreurs.push({ mot: tok.texte, sugs: [equiv], foreign: true });
         }
-      } else if (estCorrect(tok.texte)) {
+      } else if (estCorrect(tok.texte, isDebutPhrase)) {
         html += `<span>${escHtml(tok.texte)}</span>`;
       } else {
         const sugs = getSuggestions(tok.texte);
