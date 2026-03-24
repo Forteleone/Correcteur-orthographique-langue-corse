@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Correcteur Corse</title>
+<title>Currettore ortograficu</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
   :root {
@@ -289,25 +289,10 @@
 <body>
 
 <header>
-  <div class="flag">
-    <div class="flag-top"></div>
-    <div class="flag-bot">
-      <!-- Tête de Maure simplifiée -->
-      <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="20" cy="18" rx="11" ry="13" fill="#fff"/>
-        <ellipse cx="20" cy="18" rx="11" ry="13" fill="#111"/>
-        <rect x="10" y="8" width="20" height="7" rx="3" fill="#fff"/>
-        <ellipse cx="20" cy="17" rx="8" ry="9" fill="#111"/>
-        <ellipse cx="20" cy="15" rx="6" ry="5" fill="#2a2a2a"/>
-        <circle cx="17" cy="15" r="1.5" fill="#fff"/>
-        <circle cx="23" cy="15" r="1.5" fill="#fff"/>
-        <path d="M16 21 Q20 24 24 21" stroke="#fff" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-      </svg>
-    </div>
-  </div>
+  <span style="font-size:2.2rem;line-height:1;">⌨️</span>
   <div>
-    <h1>Correcteur Corse</h1>
-    <p>Correttore ortugràficu corsu — Apertium-cos</p>
+    <h1>Currettore ortograficu</h1>
+    <p>Version alpha 03.2026</p>
   </div>
 </header>
 
@@ -367,7 +352,7 @@
       <p class="lex-info">
         Ce correcteur utilise un lexique de <span id="lex-count">–</span> mots corses couvrant : pronoms, verbes courants, vocabulaire de la vie quotidienne, géographie et culture de Corse.<br><br>
         Les suggestions utilisent la <strong>distance de Levenshtein</strong> (similarité orthographique).<br><br>
-        <em>Proof of concept — pour un usage réel, intégrer le lexique Infcor (~50 000 formes).</em>
+        <em>Proof of concept — pour un usage réel, intégrer un lexique de ~50 000 formes</em>
       </p>
     </div>
 
@@ -24299,15 +24284,47 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+function normaliserAccents(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function prefixCommun(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+// Classifie le type de faute entre deux formes normalisées (sans accents, minuscules)
+// 0 = faute de finale  1 = faute de double consonne  2 = autre
+function typeFaute(aN, bN) {
+  // Type 0 : même radical, seule la terminaison diffère
+  if (aN.length === bN.length && aN.slice(0, -1) === bN.slice(0, -1)) return 0;
+  if (Math.abs(aN.length - bN.length) === 1) {
+    const [sh, lo] = aN.length < bN.length ? [aN, bN] : [bN, aN];
+    if (sh === lo.slice(0, -1)) return 0;  // le plus court est le radical du plus long
+  }
+  // Type 1 : identiques après suppression des consonnes doublées
+  const dedup = s => s.replace(/(.)\1+/g, '$1');
+  if (dedup(aN) === dedup(bN)) return 1;
+  return 2;
+}
+
 function getSuggestions(mot, maxDist=2, topN=4) {
   const ml = mot.toLowerCase();
+  const mlNorm = normaliserAccents(ml);
   const res = [];
   for (const w of LEXIQUE) {
-    if (Math.abs(w.length - ml.length) > maxDist) continue;
-    const d = levenshtein(ml, w.toLowerCase());
-    if (d <= maxDist) res.push({w, d});
+    const wl = w.toLowerCase();
+    if (Math.abs(wl.length - ml.length) > maxDist + 1) continue;
+    const wlNorm = normaliserAccents(wl);
+    const dNorm = levenshtein(mlNorm, wlNorm);
+    if (dNorm > maxDist) continue;
+    const d = levenshtein(ml, wl);
+    const lcp = prefixCommun(ml, wl);
+    const type = typeFaute(mlNorm, wlNorm);
+    res.push({w, type, dNorm, d, lcp});
   }
-  res.sort((a,b) => a.d - b.d || a.w.localeCompare(b.w));
+  res.sort((a,b) => a.type - b.type || a.dNorm - b.dNorm || a.d - b.d || b.lcp - a.lcp || a.w.localeCompare(b.w));
   return res.slice(0, topN).map(x => x.w);
 }
 
